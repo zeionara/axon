@@ -204,6 +204,7 @@ defmodule Axon do
   def dense(%Axon{output_shape: parent_shape} = x, units, opts \\ [])
       when is_integer(units) and units > 0 do
     activation = opts[:activation]
+    use_bias = opts[:use_bias]
 
     kernel_shape = Axon.Shape.dense_kernel(parent_shape, units)
     bias_shape = Axon.Shape.dense_bias(parent_shape, units)
@@ -222,7 +223,7 @@ defmodule Axon do
     bias_regularizer = opts[:bias_regularizer]
     bias = param("bias", bias_shape, initializer: bias_initializer, regularizer: bias_regularizer)
 
-    node = layer(x, :dense, output_shape, %{"kernel" => kernel, "bias" => bias}, opts[:name])
+    node = layer(x, :dense, output_shape, %{"kernel" => kernel, "bias" => bias}, opts[:name], use_bias: use_bias)
 
     if activation do
       node
@@ -264,6 +265,8 @@ defmodule Axon do
     padding = opts[:padding] || :valid
     input_dilation = opts[:input_dilation] || 1
     kernel_dilation = opts[:kernel_dilation] || 1
+    use_bias = opts[:use_bias]
+
     inner_rank = Nx.rank(parent_shape) - 2
 
     kernel_size = tuple_or_duplicate(:kernel_size, kernel_size, inner_rank)
@@ -302,7 +305,8 @@ defmodule Axon do
         strides: strides,
         padding: padding,
         input_dilation: input_dilation,
-        kernel_dilation: kernel_dilation
+        kernel_dilation: kernel_dilation,
+        use_bias: use_bias
       )
 
     if activation do
@@ -841,6 +845,35 @@ defmodule Axon do
     output_shape = Axon.Shape.adaptive_pool(parent_shape, output_size)
 
     layer(x, pool, output_shape, %{}, opts[:name], output_size: output_size)
+  end
+
+  @doc """
+  Adds a Global Average Pooling layer to the network.
+  """
+  def global_average_pool(%Axon{output_shape: parent_shape} = x, opts \\ []) do
+    output_shape = Axon.Shape.global_pool(parent_shape)
+
+    layer(x, :global_average_pool, output_shape, %{}, opts[:name])
+  end
+
+  @doc """
+  Adds a Global Max Pooling layer to the network.
+  """
+  def global_max_pool(%Axon{output_shape: parent_shape} = x, opts \\ []) do
+    output_shape = Axon.Shape.global_pool(parent_shape)
+
+    layer(x, :global_max_pool, output_shape, %{}, opts[:name])
+  end
+
+  @doc """
+  Adds a Global LP Pooling layer to the network.
+  """
+  def global_lp_pool(%Axon{output_shape: parent_shape} = x, opts \\ []) do
+    norm = opts[:norm] || 1
+
+    output_shape = Axon.Shape.global_pool(parent_shape)
+
+    layer(x, :global_lp_pool, output_shape, %{}, opts[:name], norm: norm)
   end
 
   ## Normalization

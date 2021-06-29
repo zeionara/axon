@@ -657,13 +657,19 @@ defmodule Axon.Layers do
       )
 
     padding =
-      transform({Nx.rank(input), opts[:padding]},
+      transform(
+        {Nx.rank(input), opts[:padding]},
         fn
-          {_, :same} -> :same
-          {_, :valid} -> :valid
+          {_, :same} ->
+            :same
+
+          {_, :valid} ->
+            :valid
+
           {rank, padding} ->
             List.duplicate({0, 0}, rank - 2) ++ padding
-        end)
+        end
+      )
 
     opts = transform(opts, &Keyword.delete(&1, :kernel_size))
 
@@ -730,13 +736,19 @@ defmodule Axon.Layers do
       )
 
     padding =
-      transform({Nx.rank(input), opts[:padding]},
+      transform(
+        {Nx.rank(input), opts[:padding]},
         fn
-          {_, :same} -> :same
-          {_, :valid} -> :valid
+          {_, :same} ->
+            :same
+
+          {_, :valid} ->
+            :valid
+
           {rank, padding} ->
             List.duplicate({0, 0}, rank - 2) ++ padding
-        end)
+        end
+      )
 
     opts = transform(opts, &Keyword.delete(&1, :kernel_size))
 
@@ -823,13 +835,19 @@ defmodule Axon.Layers do
       )
 
     padding =
-      transform({Nx.rank(input), opts[:padding]},
+      transform(
+        {Nx.rank(input), opts[:padding]},
         fn
-          {_, :same} -> :same
-          {_, :valid} -> :valid
+          {_, :same} ->
+            :same
+
+          {_, :valid} ->
+            :valid
+
           {rank, padding} ->
             List.duplicate({0, 0}, rank - 2) ++ padding
-        end)
+        end
+      )
 
     norm = opts[:norm]
 
@@ -1332,5 +1350,49 @@ defmodule Axon.Layers do
   defn flatten(x) do
     new_shape = transform(Nx.shape(x), &Axon.Shape.flatten/1)
     Nx.reshape(x, new_shape)
+  end
+
+  @doc """
+  Functional implementation of global average pooling which averages across
+  the feature dimensions in the input.
+  """
+  defn global_average_pool(x) do
+    all_but_batch_and_feature =
+      transform(Nx.rank(x), fn rank ->
+        for i <- 2..(rank - 2), do: i
+      end)
+
+    Nx.mean(x, axes: all_but_batch_and_feature, keep_axes: true)
+  end
+
+  @doc """
+  Functional implementation of global max pooling which computes max across
+  the feature dimensions in the input.
+  """
+  defn global_max_pool(x) do
+    all_but_batch_and_feature =
+      transform(Nx.rank(x), fn rank ->
+        for i <- 2..(rank - 2), do: i
+      end)
+
+    Nx.reduce_max(x, axes: all_but_batch_and_feature, keep_axes: true)
+  end
+
+  @doc """
+  Functional implementation of global LP pooling which computes max across
+  the feature dimensions in the input.
+  """
+  defn global_lp_pool(x, opts \\ []) do
+    opts = keyword!(opts, norm: 1)
+    norm = opts[:norm]
+
+    all_but_batch_and_feature =
+      transform(Nx.rank(x), fn rank ->
+        for i <- 2..(rank - 2), do: i
+      end)
+
+    x
+    |> Nx.sum(axes: all_but_batch_and_feature, keep_axes: true)
+    |> Nx.power(Nx.divide(Nx.tensor(1, type: Nx.type(x)), norm))
   end
 end

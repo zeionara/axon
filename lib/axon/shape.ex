@@ -671,6 +671,25 @@ defmodule Axon.Shape do
   end
 
   @doc """
+  Calculates the output shape of a global average pooling operation.
+  """
+  def global_pool(parent_shape) do
+    case parent_shape do
+      {batch, feature} ->
+        {batch, feature}
+
+      {batch, f1, _} ->
+        {batch, f1, 1}
+
+      {batch, f1, _, _} ->
+        {batch, f1, 1, 1}
+
+      {batch, f1, _, _, _} ->
+        {batch, f1, 1, 1, 1}
+    end
+  end
+
+  @doc """
   Calculates the window size of a pooling operation based on given
   kernel size and spatial rank of the input.
 
@@ -986,13 +1005,14 @@ defmodule Axon.Shape do
       {nil, 224, 3, 224}
   """
   def transpose(shape, permutation) do
-    batch_size = elem(shape, 0)
-    non_batch_shape = Tuple.delete_at(shape, 0)
+    # batch_size = elem(shape, 0)
+    # non_batch_shape = Tuple.delete_at(shape, 0)
 
-    nil_names = List.duplicate(nil, Nx.rank(non_batch_shape))
-    {transposed_shape, _} = Nx.Shape.transpose(non_batch_shape, permutation, nil_names)
+    nil_names = List.duplicate(nil, Nx.rank(shape))
+    {transposed_shape, _} = Nx.Shape.transpose(shape, permutation, nil_names)
 
-    Tuple.insert_at(transposed_shape, 0, batch_size)
+    # Tuple.insert_at(transposed_shape, 0, batch_size)
+    transposed_shape
   end
 
   @doc """
@@ -1110,5 +1130,34 @@ defmodule Axon.Shape do
     end
 
     {elem(shape, 0), 1, units}
+  end
+
+  @doc """
+  Calculates the shape after broadcasting x to y.
+  """
+  def broadcast(x_shape, y_shape) do
+    nil_x_names = List.duplicate(nil, tuple_size(x_shape))
+    nil_y_names = List.duplicate(nil, tuple_size(y_shape))
+
+    # Nx does not like nil dim
+    old_x_dim1 = elem(x_shape, 0)
+    old_y_dim1 = elem(y_shape, 0)
+
+    {x_shape, y_shape} =
+      case {old_x_dim1, old_y_dim1} do
+        {nil, nil} ->
+          {put_elem(x_shape, 0, 1), put_elem(y_shape, 0, 1)}
+
+        {nil, y} when is_integer(y) ->
+          {put_elem(x_shape, 0, 1), y_shape}
+
+        {x, nil} when is_integer(x) ->
+          {x_shape, put_elem(y_shape, 0, 1)}
+
+        _ ->
+          {x_shape, y_shape}
+      end
+
+    Nx.Shape.binary_broadcast(x_shape, nil_x_names, y_shape, nil_y_names)
   end
 end

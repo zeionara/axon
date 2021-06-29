@@ -141,6 +141,38 @@ defmodule Axon.Shared do
   defn normalize(input, mean, variance, gamma, bias, opts \\ []) do
     opts = keyword!(opts, epsilon: 1.0e-6)
 
+    gamma =
+      transform({input, gamma}, fn {input, gamma} ->
+        case Nx.shape(gamma) do
+          {units} ->
+            new_shape =
+              for _ <- 1..(Nx.rank(input) - 2), reduce: {1, units} do
+                shape -> Tuple.append(shape, 1)
+              end
+
+            Nx.reshape(gamma, new_shape)
+
+          _ ->
+            gamma
+        end
+      end)
+
+    bias =
+      transform({input, bias}, fn {input, bias} ->
+        case Nx.shape(bias) do
+          {units} ->
+            new_shape =
+              for _ <- 1..(Nx.rank(input) - 2), reduce: {1, units} do
+                shape -> Tuple.append(shape, 1)
+              end
+
+            Nx.reshape(bias, new_shape)
+
+          _ ->
+            bias
+        end
+      end)
+
     scale =
       variance
       |> Nx.add(opts[:epsilon])

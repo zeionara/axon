@@ -209,7 +209,8 @@ defmodule Axon.Compiler do
            op: :dense,
            parent: parent,
            params: %{"kernel" => %{name: w, frozen: w_frz}, "bias" => %{name: b, frozen: b_frz}},
-           policy: %{compute: compute, output: output}
+           policy: %{compute: compute, output: output},
+           opts: opts
          },
          cache,
          input_map
@@ -217,9 +218,16 @@ defmodule Axon.Compiler do
     {fun, cache} = to_predict_fun(parent, cache, input_map)
 
     fun = fn params, inputs ->
+      use_bias = opts[:use_bias] || false
+
       input = Nx.as_type(fun.(params, inputs), compute)
       w = Nx.as_type(maybe_freeze(params[w], w_frz), compute)
-      b = Nx.as_type(maybe_freeze(params[b], b_frz), compute)
+      b =
+        if use_bias do
+          Nx.as_type(maybe_freeze(params[b], b_frz), compute)
+        else
+          Nx.as_type(Nx.tensor(0, backend: Nx.Defn.Expr), compute)
+        end
       Nx.as_type(apply(Axon.Layers, :dense, [input, w, b]), output)
     end
 
@@ -241,6 +249,34 @@ defmodule Axon.Compiler do
     fun = fn params, inputs ->
       input = Nx.as_type(fun.(params, inputs), compute)
       Nx.as_type(apply(Axon.Layers, op, [input, opts]), output)
+    end
+
+    {fun, cache}
+  end
+
+  @global_pooling_layers [:global_average_pool, :global_max_pool, :global_lp_pool]
+
+  defp recur_predict_fun(
+         %Axon{op: op, parent: parent, policy: %{compute: compute, output: output}, opts: opts},
+         cache,
+         input_map
+       )
+       when op in @global_pooling_layers do
+    {fun, cache} = to_predict_fun(parent, cache, input_map)
+
+    fun = fn params, inputs ->
+      input = Nx.as_type(fun.(params, inputs), compute)
+
+      input =
+        case opts do
+          [] ->
+            [input]
+
+          opts ->
+            [input | opts]
+        end
+
+      Nx.as_type(apply(Axon.Layers, op, [input]), output)
     end
 
     {fun, cache}
@@ -285,9 +321,17 @@ defmodule Axon.Compiler do
     {fun, cache} = to_predict_fun(parent, cache, input_map)
 
     fun = fn params, inputs ->
+      {use_bias, opts} = Keyword.pop(opts, :use_bias)
       input = Nx.as_type(fun.(params, inputs), compute)
       k = Nx.as_type(maybe_freeze(params[k], k_frz), compute)
-      b = Nx.as_type(maybe_freeze(params[b], b_frz), compute)
+
+      b =
+        if use_bias do
+          Nx.as_type(maybe_freeze(params[b], b_frz), compute)
+        else
+          Nx.as_type(Nx.tensor(0, backend: Nx.Defn.Expr), compute)
+        end
+
       Nx.as_type(apply(Axon.Layers, op, [input, k, b, opts]), output)
     end
 
