@@ -678,7 +678,7 @@ defmodule Axon.Loop do
   """
   # TODO(seanmor5): Custom events
   def handle(%Loop{handlers: handle_fns} = loop, event, handler, filter \\ :always) do
-    filter = build_filter_fn(filter)
+    filter = build_filter_fn(filter, event)
 
     handle_fns =
       case event do
@@ -1192,7 +1192,7 @@ defmodule Axon.Loop do
   #
   # TODO(seanmor5): In order to handle custom events and predicate filters,
   # we will need to track event firings in the loop state.
-  defp build_filter_fn(filter) do
+  defp build_filter_fn(filter, event) do
     case filter do
       :always ->
         fn _ -> true end
@@ -1204,8 +1204,17 @@ defmodule Axon.Loop do
         end
 
       [{:every, n} | _] ->
-        fn %State{iteration: iter} ->
-          Nx.remainder(iter, n) == Nx.tensor(0)
+        case event do
+          :iteration_completed ->
+            fn %State{iteration: iter} ->
+              Nx.remainder(iter, n) == Nx.tensor(0)
+            end
+          :epoch_completed ->
+            fn %State{epoch: epoch} ->
+              Nx.remainder(epoch, n) == Nx.tensor(0)
+            end
+          _ -> raise ArgumentError, "Invalid event #{event} for executing" <>
+             " given handler every #{n} occurrences"
         end
 
       fun when is_function(fun, 1) ->
