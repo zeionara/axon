@@ -259,5 +259,102 @@ defmodule Axon.LoopTest do
 
       assert pstate == %{}
     end
+
+    test "propagates user-defined numerical data inside step_state" do
+      Nx.tensor(0)
+      Axon.input({nil, 1})
+      |> Axon.dense(1)
+      |> Loop.trainer(:binary_cross_entropy, :sgd)
+      |> Loop.handle(
+        :epoch_completed,
+        fn(%State{step_state: pstate} = state) ->
+          {
+            :continue, %State{
+              state
+              | step_state: case pstate[:counter] do
+                nil -> Map.put(pstate, :counter, 0)
+                counter -> %{pstate | counter: counter + 1}
+              end
+            }
+          }
+        end
+      )
+      |> Loop.handle(
+        :completed,
+        fn(%State{step_state: %{counter: counter}} = state) ->
+          assert 4 = counter
+
+          {:continue, state}
+        end
+      )
+      |> Loop.run(
+        [{Nx.tensor([[1.0]]), Nx.tensor([[1.0]])}],
+        epochs: 5,
+        excluding: [:counter]
+      )
+    end
+
+    test "propagates user-defined non-numerical data inside step_state" do
+      strings = {"foo", "bar", "baz", "qux", "quux"}
+
+      Axon.input({nil, 1})
+      |> Axon.dense(1)
+      |> Loop.trainer(:binary_cross_entropy, :sgd)
+      |> Loop.handle(
+        :epoch_completed,
+        fn(%State{step_state: pstate, epoch: epoch} = state) ->
+          {
+            :continue, %State{
+              state
+              | step_state: case pstate[:accumulator] do
+                nil -> Map.put(pstate, :accumulator, elem(strings, 0))
+                accumulator -> %{pstate | accumulator: accumulator <> " "  <> elem(strings, Nx.to_scalar(epoch))}
+              end
+            }
+          }
+        end
+      )
+      |> Loop.handle(
+        :completed,
+        fn(%State{step_state: %{accumulator: counter}} = state) ->
+          assert "foo bar baz qux quux" = counter
+
+          {:continue, state}
+        end
+      )
+      |> Loop.run(
+        [{Nx.tensor([[1.0]]), Nx.tensor([[1.0]])}],
+        epochs: 5,
+        excluding: [:accumulator]
+      )
+
+
+      # Axon.input({nil, 1})
+      # |> Axon.dense(1)
+      # |> Loop.trainer(:binary_cross_entropy, :sgd)
+      # |> Loop.handle(
+      #   :epoch_completed,
+      #   fn(%State{step_state: pstate} = state) ->
+      #     {
+      #       :continue, %State{
+      #         state
+      #         | step_state: case pstate[:accumulator] do
+      #           nil -> Map.put(pstate, :accumulator, 0) # elem(strings, epoch))
+      #           accumulator -> %{pstate | accumulator: accumulator} #  <> " " <>  elem(strings, epoch)}
+      #         end
+      #       }
+      #     }
+      #   end
+      # )
+      # |> Loop.handle(
+      #   :completed,
+      #   fn(%State{step_state: %{counter: counter}} = state) ->
+      #     assert "foo bar baz qux quux" = counter
+
+      #     {:continue, state}
+      #   end
+      # )
+      # |> Loop.run([{Nx.tensor([[1.0]]), Nx.tensor([[1.0]])}], epochs: 5)
+    end
   end
 end
