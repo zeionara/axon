@@ -28,7 +28,8 @@ defmodule Axon.MixProject do
     [
       {:nx, "~> 0.1.0-dev", nx_opts()},
       {:ex_doc, "~> 0.23", only: :dev, runtime: false},
-      {:table_rex, "~> 3.1.1"}
+      {:table_rex, "~> 3.1.1"},
+      {:deep_merge, "~> 1.0"}
     ]
   end
 
@@ -36,7 +37,8 @@ defmodule Axon.MixProject do
     if path = System.get_env("AXON_NX_PATH") do
       [path: path, override: true]
     else
-      [github: "elixir-nx/nx", sparse: "nx", override: true]
+      [github: "zeionara/nx", branch: "excluding-feature", sparse: "nx", override: true]
+      # [github: "elixir-nx/nx", override: true]
     end
   end
 
