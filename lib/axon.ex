@@ -2067,9 +2067,14 @@ defmodule Axon do
     import Inspect.Algebra
 
     def inspect(axon, _opts) do
+      IO.puts "foos=================================================================================="
+      IO.inspect axon, structs: false
+      # IO.inspect axon, as_tuples: false
       title = "Model"
       header = ["Layer", "Shape", "Parameters"]
+      IO.puts "Outside axon-to-rows for #{axon.name}"
       {_, cache} = axon_to_rows(axon, %{})
+      IO.puts "bar"
 
       rows =
         cache
@@ -2077,7 +2082,9 @@ defmodule Axon do
         |> Enum.unzip()
         |> Kernel.elem(1)
 
-      rows
+      IO.inspect rows
+
+      result = rows
       |> TableRex.Table.new(header, title)
       |> TableRex.Table.render!(
         header_separator_symbol: "=",
@@ -2085,22 +2092,35 @@ defmodule Axon do
         vertical_style: :off
       )
       |> string()
+
+      IO.puts "baz"
+
+      IO.inspect result
+
+      IO.puts "qux"
+
+      result
     end
 
-    defp axon_to_rows(%{id: id} = graph, cache) do
+    defp axon_to_rows(%{id: id, name: op} = graph, cache) do
+      IO.puts "Inside axon-to-rows for #{op}"
       case cache do
         %{^id => row} ->
           {row, cache}
 
         %{} ->
+          IO.puts "Calling do-axon-to-rows for #{op} ((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((("
           {row, cache} = do_axon_to_rows(graph, cache)
+          IO.puts "Called do-axon-to-rows"
           cache = Map.put(cache, id, row)
           {row, cache}
       end
     end
 
-    defp do_axon_to_rows(%Axon{op: op, parent: parents, name: name, output_shape: shape}, cache)
+    defp do_axon_to_rows(%Axon{parent: parents, name: name, output_shape: shape}, cache)
          when is_list(parents) do
+           op = name
+           IO.puts "do axon to rows for #{op} -----------------------------------------------------------------------------------"
       {names, cache} =
         Enum.map_reduce(parents, cache, fn %Axon{name: name} = graph, cache ->
           {_, cache} = axon_to_rows(graph, cache)
@@ -2113,20 +2133,31 @@ defmodule Axon do
     end
 
     defp do_axon_to_rows(
-           %Axon{op: op, params: params, parent: parent, name: name, output_shape: shape},
-           cache
-         ) do
+       %Axon{params: params, parent: parent, name: name, output_shape: shape},
+       cache
+     ) do
+      op = name
+
+      IO.puts "do axon to rows for #{op} ----------------------------------------------------------------------------------->"
+
       cache =
         if parent do
           {_, cache} = axon_to_rows(parent, cache)
+          IO.puts "Returned from nested axon-to-rows call (self = #{name}). Cache:"
+          IO.inspect cache
           cache
         else
           cache
         end
 
+      IO.puts "Counting params..."
+      IO.inspect params, structs: false
       num_params =
         params
         |> Enum.reduce(0, fn {_, %Axon.Parameter{shape: shape}}, acc -> acc + Nx.size(shape) end)
+      IO.puts "Counted params"
+
+      IO.puts "Inspecting op = #{op}"
 
       op_inspect =
         case op do
@@ -2134,7 +2165,11 @@ defmodule Axon do
           _ -> "custom"
         end
 
+      IO.puts "Inspected op = #{op_inspect}"
+
       row = [name <> " ( #{op_inspect} )", "#{inspect(shape)}", "#{num_params}"]
+
+      IO.inspect row
       {row, cache}
     end
   end
