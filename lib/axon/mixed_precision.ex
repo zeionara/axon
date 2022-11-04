@@ -15,7 +15,7 @@ defmodule Axon.MixedPrecision do
   to a model:
 
       model =
-        Axon.input({nil, 784})
+        Axon.input("input", shape: {nil, 784})
         |> Axon.dense(128, activation: :relu)
         |> Axon.batch_norm()
         |> Axon.dropout(rate: 0.5)
@@ -90,7 +90,7 @@ defmodule Axon.MixedPrecision do
       end)
   """
   def apply_policy(%Axon{} = axon, %Policy{} = policy, filter) when is_function(filter) do
-    Axon.tree_map(axon, fn layer ->
+    Axon.map_nodes(axon, fn layer ->
       if filter.(layer) do
         %{layer | policy: policy}
       else
@@ -101,7 +101,7 @@ defmodule Axon.MixedPrecision do
 
   @doc false
   def apply_policy(axon, policy, only: only) do
-    filter = fn %Axon{op: op} ->
+    filter = fn %Axon.Node{op: op} ->
       Enum.member?(only, op)
     end
 
@@ -110,7 +110,7 @@ defmodule Axon.MixedPrecision do
 
   @doc false
   def apply_policy(axon, policy, except: exceptions) do
-    filter = fn %Axon{op: op} ->
+    filter = fn %Axon.Node{op: op} ->
       not Enum.member?(exceptions, op)
     end
 

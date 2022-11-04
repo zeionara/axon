@@ -1,5 +1,7 @@
 <h1><img src="https://github.com/elixir-nx/axon/raw/main/axon.png" alt="Axon" width="350"></h1>
 
+[![Package](https://img.shields.io/badge/-Package-important)](https://hex.pm/packages/axon) [![Documentation](https://img.shields.io/badge/-Documentation-blueviolet)](https://hexdocs.pm/axon)
+
 Nx-powered Neural Networks for Elixir.
 
 Axon consists of the following components:
@@ -14,8 +16,6 @@ Axon provides abstractions that enable easy integration while maintaining a leve
 ## Overview
 
 For an in-depth overview, see: [Axon: Deep Learning in Elixir](https://seanmoriarity.com/2021/04/08/axon-deep-learning-in-elixir/)
-
-API documentation is available at [https://elixir-nx.github.io/axon](https://elixir-nx.github.io/axon)
 
 ### Functional API
 
@@ -37,60 +37,59 @@ An example model looks something like:
 
 ```elixir
 model =
-  Axon.input({nil, 784})
+  Axon.input("input", shape: {nil, 784})
   |> Axon.dense(128)
   |> Axon.dense(10, activation: :softmax)
 ```
 
-The model is just an Elixir struct, so serializing it to multiple formats in the future is straightforward. An added benefit is easy customization of model inspection using the Inspect protocol. The above model is printed as:
+The model is just an Elixir struct, so serializing it to multiple formats in the future is straightforward. The default inspect protocol provides a simple summary of the model. You can visualize a better summary using the `Axon.Display` module. For example, you can use `Axon.Display.as_table/2` to see a table summary of the model:
 
 ```
------------------------------------------------
-                     Model
-===============================================
- Layer                 Shape        Parameters
-===============================================
- input_1 (input)       {nil, 784}   0
- dense_2 (dense)       {nil, 128}   100480
- dense_3 (dense)       {nil, 10}    1290
- softmax_4 (softmax)   {nil, 10}    0
------------------------------------------------
++-----------------------------------------------------------------------------------------------------------+
+|                                                   Model                                                   |
++==================================+=============+==============+===================+=======================+
+| Layer                            | Input Shape | Output Shape | Options           | Parameters            |
++==================================+=============+==============+===================+=======================+
+| input ( input )                  | []          | {1, 784}     | shape: {nil, 784} |                       |
+|                                  |             |              | optional: false   |                       |
++----------------------------------+-------------+--------------+-------------------+-----------------------+
+| dense_0 ( dense["input"] )       | [{1, 784}]  | {1, 128}     |                   | kernel: f32[784][128] |
+|                                  |             |              |                   | bias: f32[128]        |
++----------------------------------+-------------+--------------+-------------------+-----------------------+
+| dense_1 ( dense["dense_0"] )     | [{1, 128}]  | {1, 10}      |                   | kernel: f32[128][10]  |
+|                                  |             |              |                   | bias: f32[10]         |
++----------------------------------+-------------+--------------+-------------------+-----------------------+
+| softmax_0 ( softmax["dense_1"] ) | [{1, 10}]   | {1, 10}      |                   |                       |
++----------------------------------+-------------+--------------+-------------------+-----------------------+
+Total Parameters: 101770
+Total Parameters Memory: 407080 bytes
 ```
 
-Axon provides a few conveniences for working with models. First, we chose to take the philosophy that a model’s only concerns are initialization and application. That means the model shouldn’t be concerned at all with details like training. Axon provides the macros `Axon.init/2` and `Axon.predict/4` for initializing and applying models:
+Axon provides a few conveniences for working with models. First, we chose to take the philosophy that a model’s only concerns are initialization and application. That means the model shouldn’t be concerned at all with details like training. Axon provides the `Axon.build/2` function for building the Axon data structure into initialization and prediction functions:
 
 ```elixir
 model =
-  Axon.input({nil, 784})
+  Axon.input("input", shape: {nil, 784})
   |> Axon.dense(128, activation: :relu)
   |> Axon.dropout(rate: 0.5)
   |> Axon.dense(10, activation: :softmax)
 
-params = Axon.init(model, compiler: EXLA)
-Axon.predict(model, params, input, compiler: EXLA)
+{init_fn, predict_fn} = Axon.build(model, compiler: EXLA)
+
+params = init_fn.(Nx.template({1, 784}, :f32), %{})
+predict_fn.(params, input)
 ```
 
-Both macros are valid inside `defn`, meaning you can easily integrate model execution with existing numerical definitions.
+You can pass functions directly to `defn`, meaning you can easily integrate model execution with existing numerical definitions.
 
-Axon currently has support for:
-
-* Linear layers (dense, bilinear, embedding)
-* Dropout layers (dropout, feature_alpha_dropout, alpha_dropout, spatial_dropout)
-* Convolutional Layers (conv, conv_transpose, depthwise_conv, separable_conv2d, separable_conv3d)
-* Recurrent Layers (gru, lstm, conv_lstm)
-* Normalization Layers (batch_norm, layer_norm, group_norm, instance_norm)
-* Pooling Layers (max_pool, avg_pool, lp_pool, adaptive_max_pool, adaptive_avg_pool, adaptive_lp_pool, global_max_pool, global_avg_pool, global_lp_pool)
-* Activation Layers (every function in Axon.Activations)
-* Utilities/combinators (flatten, add, multiply, subtract, concatenate, pad, nx, reshape, transpose)
-
-with plans to support recurrent layers, attention layers, and many more. Our goal is to maintain an API that is productive, extensible, and on par with other modern deep learning frameworks. If there is functionality you need to see that’s not included on the roadmap, feel free to open an issue.
+Axon currently has support for the same high-level layers you'd find in a framework like PyTorch or TensorFlow Keras. Our goal is to maintain an API that is productive, extensible, and on par with other modern deep learning frameworks. If there is functionality you need to see that’s not included, feel free to open an issue.
 
 ### Optimization and training
 
 The purpose of the training API is to provide conveniences and common routines for implementing training loops. The API is inspired by the excellent PyTorch Ignite library.
 
 The general pattern for training a model is:
-  
+
   1) Define model
   2) Define loop using one of the factory methods (here `Axon.Loop.trainer/3`)
   3) Instrument loop with metrics and event handlers
@@ -98,7 +97,7 @@ The general pattern for training a model is:
 
 ```elixir
 model =
-  Axon.input({nil, 784})
+  Axon.input("input", shape: {nil, 784})
   |> Axon.dense(128)
   |> Axon.dense(10, activation: :softmax)
 
@@ -107,7 +106,7 @@ model_state =
   |> Axon.Loop.trainer(:categorical_cross_entropy, Axon.Optimizers.adamw(0.005))
   |> Axon.Loop.metric(:accuracy)
   |> Axon.Loop.handle(:iteration_completed, &log_metrics/1, every: 50)
-  |> Axon.Loop.run(data, epochs: 10, compiler: EXLA)
+  |> Axon.Loop.run(data, %{}, epochs: 10, compiler: EXLA)
 ```
 
 The step expects an optimizer as argument. The following are currently supported:
@@ -136,12 +135,12 @@ In order to use `Axon`, you will need Elixir installed. Then create an Elixir pr
 $ mix new my_app
 ```
 
-Then you can add `Axon` as dependency in your `mix.exs`. At the moment you will have to use a Git dependency while we work on our first release:
+Then add Axon to your dependencies:
 
 ```elixir
 def deps do
   [
-    {:axon, "~> 0.1.0-dev", github: "elixir-nx/axon", branch: "main"}
+    {:axon, "~> 0.2.0"}
   ]
 end
 ```
@@ -151,12 +150,16 @@ You'll also likely want to include an `Nx` compiler such as `EXLA` for any pract
 ```elixir
 def deps do
   [
-    {:axon, "~> 0.1.0-dev", github: "elixir-nx/axon", branch: "main"},
-    {:exla, "~> 0.1.0-dev", github: "elixir-nx/nx", sparse: "exla", override: true},
-    {:nx, "~> 0.1.0-dev", github: "elixir-nx/nx", sparse: "nx", override: true}
+    {:axon, "~> 0.2.0"},
+    {:exla, "~> 0.3.0"},
+    {:nx, "~> 0.3.0"}
   ]
 end
 ```
+
+## Sponsors
+
+<a href="https://dockyard.com"><img src="sponsors/dockyard.png" width=200 alt="DockYard"></a>
 
 ## License
 

@@ -119,7 +119,7 @@ defmodule Axon.Losses do
 
   """
   defn binary_cross_entropy(y_true, y_pred, opts \\ []) do
-    assert_shape!(y_true, y_pred)
+    assert_shape!("Axon.Losses.binary_cross_entropy", "y_true", y_true, "y_pred", y_pred)
 
     opts =
       keyword!(opts,
@@ -211,14 +211,7 @@ defmodule Axon.Losses do
           Nx.mean(weights * loss)
       end)
 
-    transform(
-      {opts[:reduction], possibly_weighted_avg_loss},
-      fn
-        {:mean, loss} -> Nx.mean(loss)
-        {:sum, loss} -> Nx.sum(loss)
-        {:none, loss} -> loss
-      end
-    )
+    reduction(possibly_weighted_avg_loss, opts[:reduction])
   end
 
   defnp sigmoid_cross_entropy_from_logits(y_true, y_pred) do
@@ -360,7 +353,7 @@ defmodule Axon.Losses do
                   # If y_true is not at least rank 2, add a new axis to select
                   # one index per value along the batch axis
                   y_true =
-                    if Nx.rank(y_true) < 2 do
+                    if Elixir.Kernel.<(Nx.rank(y_true), 2) do
                       Nx.new_axis(y_true, -1)
                     else
                       y_true
@@ -427,7 +420,7 @@ defmodule Axon.Losses do
         # If y_true is not at least rank 2, add a new axis to select
         # one index per value along the batch axis
         y_true =
-          if Nx.rank(y_true) < 2 do
+          if Elixir.Kernel.<(Nx.rank(y_true), 2) do
             Nx.new_axis(y_true, -1)
           else
             y_true
@@ -504,14 +497,7 @@ defmodule Axon.Losses do
       |> Nx.add(1)
       |> Nx.max(0)
 
-    transform(
-      {opts[:reduction], loss},
-      fn
-        {:mean, loss} -> Nx.mean(loss)
-        {:sum, loss} -> Nx.sum(loss)
-        {:none, loss} -> loss
-      end
-    )
+    reduction(loss, opts[:reduction])
   end
 
   @doc ~S"""
@@ -556,8 +542,6 @@ defmodule Axon.Losses do
       >
   """
   defn hinge(y_true, y_pred, opts \\ []) do
-    assert_shape!(y_true, y_pred)
-
     opts = keyword!(opts, reduction: :none)
 
     loss =
@@ -568,14 +552,7 @@ defmodule Axon.Losses do
       |> Nx.max(0)
       |> Nx.mean(axes: [-1])
 
-    transform(
-      {opts[:reduction], loss},
-      fn
-        {:mean, loss} -> Nx.mean(loss)
-        {:sum, loss} -> Nx.sum(loss)
-        {:none, loss} -> loss
-      end
-    )
+    reduction(loss, opts[:reduction])
   end
 
   @doc ~S"""
@@ -621,8 +598,6 @@ defmodule Axon.Losses do
 
   """
   defn kl_divergence(y_true, y_pred, opts \\ []) do
-    assert_shape!(y_true, y_pred)
-
     opts = keyword!(opts, reduction: :none)
     epsilon = 1.0e-7
     y_true = Nx.clip(y_true, epsilon, 1)
@@ -635,14 +610,7 @@ defmodule Axon.Losses do
       |> Nx.multiply(y_true)
       |> Nx.sum(axes: [-1])
 
-    transform(
-      {opts[:reduction], loss},
-      fn
-        {:mean, loss} -> Nx.mean(loss)
-        {:sum, loss} -> Nx.sum(loss)
-        {:none, loss} -> loss
-      end
-    )
+    reduction(loss, opts[:reduction])
   end
 
   @doc ~S"""
@@ -687,8 +655,6 @@ defmodule Axon.Losses do
       >
   """
   defn log_cosh(y_true, y_pred, opts \\ []) do
-    assert_shape!(y_true, y_pred)
-
     opts = keyword!(opts, reduction: :none)
 
     x =
@@ -704,14 +670,7 @@ defmodule Axon.Losses do
       |> Nx.subtract(Nx.log(2))
       |> Nx.mean(axes: [-1])
 
-    transform(
-      {opts[:reduction], loss},
-      fn
-        {:mean, loss} -> Nx.mean(loss)
-        {:sum, loss} -> Nx.sum(loss)
-        {:none, loss} -> loss
-      end
-    )
+    reduction(loss, opts[:reduction])
   end
 
   @doc ~S"""
@@ -754,9 +713,6 @@ defmodule Axon.Losses do
       >
   """
   defn margin_ranking(y_true, {y_pred1, y_pred2}, opts \\ []) do
-    assert_shape!(y_pred1, y_pred2)
-    assert_shape!(y_true, y_pred1)
-
     opts = keyword!(opts, margin: 0.0, reduction: :none)
     margin = opts[:margin]
 
@@ -767,14 +723,7 @@ defmodule Axon.Losses do
       |> Nx.add(margin)
       |> Nx.max(0)
 
-    transform(
-      {opts[:reduction], loss},
-      fn
-        {:mean, loss} -> Nx.mean(loss)
-        {:sum, loss} -> Nx.sum(loss)
-        {:none, loss} -> loss
-      end
-    )
+    reduction(loss, opts[:reduction])
   end
 
   @doc ~S"""
@@ -824,14 +773,7 @@ defmodule Axon.Losses do
       |> Nx.log1p()
       |> Nx.sum(axes: [0])
 
-    transform(
-      {opts[:reduction], loss},
-      fn
-        {:mean, loss} -> Nx.mean(loss)
-        {:sum, loss} -> Nx.sum(loss)
-        {:none, loss} -> loss
-      end
-    )
+    reduction(loss, opts[:reduction])
   end
 
   @doc ~S"""
@@ -876,8 +818,6 @@ defmodule Axon.Losses do
       >
   """
   defn mean_absolute_error(y_true, y_pred, opts \\ []) do
-    assert_shape!(y_true, y_pred)
-
     opts = keyword!(opts, reduction: :none)
 
     loss =
@@ -886,14 +826,7 @@ defmodule Axon.Losses do
       |> Nx.abs()
       |> Nx.mean(axes: [-1])
 
-    transform(
-      {opts[:reduction], loss},
-      fn
-        {:mean, loss} -> Nx.mean(loss)
-        {:sum, loss} -> Nx.sum(loss)
-        {:none, loss} -> loss
-      end
-    )
+    reduction(loss, opts[:reduction])
   end
 
   @doc ~S"""
@@ -938,8 +871,6 @@ defmodule Axon.Losses do
       >
   """
   defn mean_squared_error(y_true, y_pred, opts \\ []) do
-    assert_shape!(y_true, y_pred)
-
     opts = keyword!(opts, reduction: :none)
 
     loss =
@@ -947,6 +878,48 @@ defmodule Axon.Losses do
       |> Nx.subtract(y_pred)
       |> Nx.power(2)
       |> Nx.mean(axes: [-1])
+
+    reduction(loss, opts[:reduction])
+  end
+
+  @doc ~S"""
+  Cosine Similarity error loss function.
+
+  $$l_i = \sum_i (\hat{y_i} - y_i)^2$$
+
+  ## Argument Shapes
+
+    * `y_true` - $(d_0, d_1, ..., d_n)$
+    * `y_pred` - $(d_0, d_1, ..., d_n)$
+
+  ## Options
+
+    * `:reduction` - reduction mode. One of `:mean`, `:sum`, or `:none`.
+      Defaults to `:none`.
+    * `:axes` - Defaults to `[1]`.
+    * `:eps` - Defaults to `1.0e-6`.
+
+  ## Examples
+
+      iex> y_pred = Nx.tensor([[1.0, 0.0], [1.0, 1.0]])
+      iex> y_true = Nx.tensor([[0.0, 1.0], [1.0, 1.0]])
+      iex> Axon.Losses.cosine_similarity(y_true, y_pred)
+      #Nx.Tensor<
+        f32[2]
+        [0.0, 1.0000001192092896]
+      >
+  """
+
+  defn cosine_similarity(y_true, y_pred, opts \\ []) do
+    opts = keyword!(opts, axes: [1], eps: 1.0e-6, reduction: :none)
+    axes = opts[:axes]
+    eps = opts[:eps]
+
+    w12 = Nx.sum(y_true * y_pred, axes: axes)
+    w1 = Nx.LinAlg.norm(y_true, axes: axes)
+    w2 = Nx.LinAlg.norm(y_pred, axes: axes)
+    n12 = Nx.max(w1 * w2, eps)
+    loss = w12 / n12
 
     transform(
       {opts[:reduction], loss},
@@ -1000,8 +973,6 @@ defmodule Axon.Losses do
       >
   """
   defn poisson(y_true, y_pred, opts \\ []) do
-    assert_shape!(y_true, y_pred)
-
     opts = keyword!(opts, reduction: :none)
 
     epsilon = 1.0e-7
@@ -1015,8 +986,183 @@ defmodule Axon.Losses do
       |> Nx.add(y_pred)
       |> Nx.mean(axes: [-1])
 
+    reduction(loss, opts[:reduction])
+  end
+
+  @doc """
+  Connectionist Temporal Classification loss.
+
+  ## Argument Shapes
+
+    * `l_true` - $\(B\)$
+    * `y_true` - $\(B, S\)$
+    * `y_pred` - $\(B, T, D\)$
+
+  ## Options
+
+  * `:reduction` - reduction mode. One of `:sum` or `:none`.
+    Defaults to `:none`.
+
+  ## Description
+    `l_true` contains lengths of target sequences. Nonzero positive values.
+    `y_true` contains target sequences. Each value represents a class
+    of element in range of available classes 0 <= y < D. Blank element
+    class is included in this range, but shouldn't be presented among
+    y_true values. Maximum target sequence length should be lower or equal
+    to `y_pred` sequence length: S <= T.
+    `y_pred` - log probabilities of classes D along the
+    prediction sequence T.
+
+  """
+  defn connectionist_temporal_classification({l_true, y_true}, y_pred, opts \\ []) do
+    opts = keyword!(opts, blank: 0, reduction: :none)
+    eps = Nx.tensor(1.0e-7)
+    b_size = elem(Nx.shape(y_true), 0)
+    t_max = elem(Nx.shape(y_pred), 1) - 1
+    loss = Nx.broadcast(0.0, {b_size})
+
+    # Add padding to y_true
+    y_true = Nx.pad(y_true, opts[:blank], [{0, 0, 0}, {1, 1, 1}])
+    s_true = Nx.multiply(l_true, 2)
+
+    {loss, _, _, _, _} =
+      while {loss, b = 0, y_true, s_true, y_pred}, b < b_size do
+        # Get boundaries for available node paths.
+        st_lims = get_limits(y_true[b], s_true[b], t_max)
+        # Iterate node tree backwards.
+        s_pred0 = iterate_tree(y_true[b], y_pred[b], st_lims, t_max)
+
+        {loss_b, _, _, _} =
+          while {loss_b = 0.0, s = st_lims[0][0], s_pred0, st_lims}, s <= st_lims[0][1] do
+            {Nx.add(loss_b, Nx.exp(s_pred0[s])), s + 1, s_pred0, st_lims}
+          end
+
+        loss_b =
+          Nx.add(loss_b, eps)
+          |> Nx.log()
+          |> Nx.abs()
+
+        {Nx.put_slice(loss, [b], Nx.reshape(loss_b, {1})), b + 1, y_true, s_true, y_pred}
+      end
+
     transform(
       {opts[:reduction], loss},
+      fn
+        {:mean, loss} -> Nx.divide(loss, l_true) |> Nx.mean()
+        {:sum, loss} -> Nx.sum(loss)
+        {:none, loss} -> loss
+      end
+    )
+  end
+
+  defnp get_limits(y_true, s_max, t_max) do
+    st_max = Nx.concatenate([Nx.tensor([1]), Nx.broadcast(s_max, {t_max})])
+    # Iterate target to get upper boundary values for each sequence step.
+    {st_max, _, t_fin, _, _, _} =
+      while {st_max, s = 1, t = 1, y_true, t_max, s_max}, t <= t_max and s <= s_max - 2 do
+        s =
+          cond do
+            y_true[s] != y_true[s + 2] -> s + 2
+            true -> s + 1
+          end
+
+        {Nx.put_slice(st_max, [t], Nx.reshape(s, {1})), s, t + 1, y_true, t_max, s_max}
+      end
+
+    st_min =
+      cond do
+        t_fin == t_max + 1 ->
+          st_max
+
+        true ->
+          st_min = Nx.broadcast(0, {t_max + 1})
+
+          {st_min, _, _, _} =
+            while {st_min, dt = 1, st_max, t_fin}, dt <= t_fin do
+              {Nx.put_slice(st_min, [t_max - dt + 1], Nx.reshape(st_max[t_fin - dt], {1})),
+               dt + 1, st_max, t_fin}
+            end
+
+          st_min
+      end
+
+    Nx.stack([st_min, st_max], axis: 1)
+  end
+
+  # Get `node transition` part
+  defnp get_path_prob(s, y_true, prob_prev, s_lims_prev) do
+    # Iterate over all possible transition paths
+    {path_prob, _, _, _, _, _} =
+      while {path_prob = Nx.broadcast(0.0, {3}), s, d = 0, y_true, prob_prev, s_lims_prev},
+            d <= 2 do
+        path_prob =
+          cond do
+            s + d < s_lims_prev[0] or s + d > s_lims_prev[1] ->
+              path_prob
+
+            d == 2 and y_true[s] == y_true[s + d] ->
+              path_prob
+
+            true ->
+              Nx.put_slice(path_prob, [d], Nx.reshape(Nx.exp(prob_prev[s + d]), {1}))
+          end
+
+        {path_prob, s, d + 1, y_true, prob_prev, s_lims_prev}
+      end
+
+    path_prob
+  end
+
+  # Get iteration values for acceptable nodes at a sequence step.
+  defnp get_prob(prob_prev, s_lims, s_lims_prev, y_true, y_pred) do
+    eps = Nx.tensor(1.0e-7)
+    # Process nodes one-by-one from lower to upper bound.
+    {t_prob, _, _, _, _, _} =
+      while {prob_prev, s = s_lims[0], y_true, y_pred, s_lims_prev, s_lims}, s <= s_lims[1] do
+        # Get `node transition` part
+        path_prob =
+          get_path_prob(s, y_true, prob_prev, s_lims_prev)
+          |> Nx.sum()
+          |> Nx.add(eps)
+          |> Nx.log()
+
+        # Add `node probability` part
+        s_prob =
+          Nx.add(y_pred[y_true[s]], path_prob)
+          |> Nx.reshape({1})
+
+        {Nx.put_slice(prob_prev, [s], s_prob), s + 1, y_true, y_pred, s_lims_prev, s_lims}
+      end
+
+    t_prob
+  end
+
+  defnp iterate_tree(y_true, y_pred, st_lims, t_max) do
+    s_tmax_min = st_lims[t_max][0]
+    s_tmax_max = st_lims[t_max][1]
+    tmax_pred = y_pred[t_max]
+    tmax_prob = Nx.broadcast(0.0, Nx.shape(y_true))
+    # Get initial data for backwards iteration.
+    {tmax_prob, _, _, _, _} =
+      while {tmax_prob, s = s_tmax_min, s_tmax_max, tmax_pred, y_true}, s <= s_tmax_max do
+        {Nx.put_slice(tmax_prob, [s], Nx.reshape(tmax_pred[y_true[s]], {1})), s + 1, s_tmax_max,
+         tmax_pred, y_true}
+      end
+
+    # Iterate node tree backwards.
+    {t0_prob, _, _, _, _} =
+      while {prob = tmax_prob, t = t_max - 1, y_true, y_pred, st_lims}, t >= 0 do
+        # Get iteration values for acceptable nodes at a sequence step.
+        prob = get_prob(prob, st_lims[t], st_lims[t + 1], y_true, y_pred[t])
+        {prob, t - 1, y_true, y_pred, st_lims}
+      end
+
+    t0_prob
+  end
+
+  defnp reduction(loss, reduction \\ :none) do
+    transform(
+      {reduction, loss},
       fn
         {:mean, loss} -> Nx.mean(loss)
         {:sum, loss} -> Nx.sum(loss)

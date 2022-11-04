@@ -1,0 +1,183 @@
+<!-- livebook:{"persist_outputs":true} -->
+
+# Sequential models
+
+```elixir
+Mix.install([
+  {:axon, github: "elixir-nx/axon"},
+  {:nx, "~> 0.3.0", github: "elixir-nx/nx", sparse: "nx", override: true},
+  {:kino, "~> 0.7.0"}
+])
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+:ok
+```
+
+## Creating a sequential model
+
+In the [last guide](your_first_axon_model.livemd), you created a simple identity model which just returned the input. Of course, you would never actually use Axon for such purposes. You want to create real neural networks!
+
+In equivalent frameworks in the Python ecosystem such as Keras and PyTorch, there is a concept of *sequential models*. Sequential models are named after the sequential nature in which data flows through them. Sequential models transform the input with sequential, successive transformations.
+
+If you're an experienced Elixir programmer, this paradigm of sequential transformations might sound a lot like what happens when using the pipe (`|>`) operator. In Elixir, it's common to see code blocks like:
+
+<!-- livebook:{"force_markdown":true} -->
+
+```elixir
+list
+|> Enum.map(fn x -> x + 1 end)
+|> Enum.filter(&rem(&1, 2) == 0)
+|> Enum.count()
+```
+
+The snippet above passes `list` through a sequence of transformations. You can apply this same paradigm in Axon to create sequential models. In fact, creating sequential models is so natural with Elixir's pipe operator, that Axon does not need a distinct *sequential* construct. To create a sequential model, you just pass Axon models through successive transformations in the Axon API:
+
+```elixir
+model =
+  Axon.input("data")
+  |> Axon.dense(32)
+  |> Axon.activation(:relu)
+  |> Axon.dropout(rate: 0.5)
+  |> Axon.dense(1)
+  |> Axon.activation(:softmax)
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+#Axon<
+  inputs: %{"data" => nil}
+  outputs: "softmax_0"
+  nodes: 6
+>
+```
+
+If you visualize this model, it's easy to see how data flows sequentially through it:
+
+```elixir
+template = Nx.template({2, 16}, :f32)
+Axon.Display.as_graph(model, template)
+```
+
+<!-- livebook:{"output":true} -->
+
+```mermaid
+graph TD;
+3[/"data (:input) {2, 16}"/];
+6["dense_0 (:dense) {2, 32}"];
+7["relu_0 (:relu) {2, 32}"];
+8["dropout_0 (:dropout) {2, 32}"];
+11["dense_1 (:dense) {2, 1}"];
+12["softmax_0 (:softmax) {2, 1}"];
+11 --> 12;
+8 --> 11;
+7 --> 8;
+6 --> 7;
+3 --> 6;
+```
+
+Your model is more involved and as a result so is the execution graph! Now, using the same constructs from the last section, you can build and run your model:
+
+```elixir
+{init_fn, predict_fn} = Axon.build(model)
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+{#Function<137.55749718/2 in Nx.Defn.wrap_arity/2>,
+ #Function<137.55749718/2 in Nx.Defn.wrap_arity/2>}
+```
+
+```elixir
+params = init_fn.(template, %{})
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+%{
+  "dense_0" => %{
+    "bias" => #Nx.Tensor<
+      f32[32]
+      [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    >,
+    "kernel" => #Nx.Tensor<
+      f32[16][32]
+      [
+        [-0.25727564096450806, -0.31299564242362976, -0.1557893306016922, -0.3321501314640045, 0.34875044226646423, 0.15635445713996887, 0.25805917382240295, 0.316285640001297, 0.29047688841819763, -0.09108144044876099, 0.2781231701374054, 0.21326711773872375, -0.29581472277641296, -0.3105146288871765, -0.11265464127063751, 0.054490894079208374, -0.22294805943965912, 0.23276928067207336, 0.06426036357879639, 0.12059605121612549, -0.24530324339866638, 0.061366915702819824, 0.17463091015815735, -0.2774006724357605, 0.2621242105960846, 0.19262376427650452, -0.10884760320186615, -0.3156566321849823, 0.104307621717453, -0.22591334581375122, -0.09672778844833374, -0.18450938165187836],
+        [-0.32328563928604126, -0.3434811234474182, -0.3464450538158417, 0.14756330847740173, 0.010595977306365967, 0.32808688282966614, -0.3048470616340637, 0.011142522096633911, 0.10394474864006042, 0.04501914978027344, -0.26296690106391907, -0.1051199734210968, -0.0060880184173583984, 0.22103646397590637, -0.3040429651737213, ...],
+        ...
+      ]
+    >
+  },
+  "dense_1" => %{
+    "bias" => #Nx.Tensor<
+      f32[1]
+      [0.0]
+    >,
+    "kernel" => #Nx.Tensor<
+      f32[32][1]
+      [
+        [-0.379288911819458],
+        [-0.05532142519950867],
+        [-0.07836392521858215],
+        [0.41381680965423584],
+        [0.33221137523651123],
+        [0.23515504598617554],
+        [-0.40667685866355896],
+        [-0.3503745198249817],
+        [0.2631032466888428],
+        [-0.13176566362380981],
+        [-0.3811171054840088],
+        [0.24656128883361816],
+        [0.17257028818130493],
+        [0.3528350591659546],
+        [0.4112042784690857],
+        [0.056196123361587524],
+        [0.138421893119812],
+        [-0.38378745317459106],
+        [-0.044070273637771606],
+        [0.11507803201675415],
+        [-0.3125251233577728],
+        [-0.11389034986495972],
+        [-0.27444711327552795],
+        [-0.30974721908569336],
+        [-0.3695589303970337],
+        [0.3146793246269226],
+        [0.005854517221450806],
+        [-0.03735968470573425],
+        [0.02763468027114868],
+        [-0.10707724094390869],
+        [0.10824829339981079],
+        [0.29013824462890625]
+      ]
+    >
+  }
+}
+```
+
+Wow! Notice that this model actually has trainable parameters. You can see that the parameter map is just a regular Elixir map. Each top-level entry maps to a layer with a key corresponding to that layer's name and a value corresponding to that layer's trainable parameters. Each layer's individual trainable parameters are given layer-specific names and map directly to Nx tensors.
+
+Now you can use these `params` with your `predict_fn`:
+
+```elixir
+predict_fn.(params, Nx.iota({2, 16}, type: :f32))
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+#Nx.Tensor<
+  f32[2][1]
+  [
+    [1.0],
+    [1.0]
+  ]
+>
+```
+
+And voila! You've successfully created and used a sequential model in Axon!

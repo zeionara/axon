@@ -204,33 +204,32 @@ defmodule Axon.Activations do
   @doc ~S"""
   Hard sigmoid activation.
 
-  $$f(x_i) = \begin{cases} 0 & x_i \leq -3 \newline
-  1 & x_i \geq 3 \newline
-  \frac{x_i}{6} + \frac{1}{2} & otherwise \end{cases}$$
-
   ## Examples
 
       iex> Axon.Activations.hard_sigmoid(Nx.tensor([-3.0, -2.0, -1.0, 0.0, 1.0, 2.0, 3.0], names: [:data]))
       #Nx.Tensor<
         f32[data: 7]
-        [0.0, 0.1666666716337204, 0.3333333432674408, 0.5, 0.6666666865348816, 0.8333333134651184, 1.0]
+        [0.0, 0.0, 0.0, 0.20000000298023224, 0.4000000059604645, 0.6000000238418579, 0.800000011920929]
       >
 
       iex> Axon.Activations.hard_sigmoid(Nx.tensor([[-1.0, -2.0, -3.0], [1.0, 2.0, 3.0]], type: {:bf, 16}, names: [:batch, :data]))
       #Nx.Tensor<
         bf16[batch: 2][data: 3]
         [
-          [0.33203125, 0.166015625, 0.0],
-          [0.6640625, 0.83203125, 1.0]
+          [7.781982421875e-4, 0.0, 0.0],
+          [0.3984375, 0.59765625, 0.796875]
         ]
       >
 
   """
-  defn hard_sigmoid(x) do
+  defn hard_sigmoid(x, opts \\ []) do
+    opts = keyword!(opts, alpha: 0.2, beta: 0.2)
+
     x
-    |> Nx.add(3)
-    |> relu6()
-    |> Nx.divide(6)
+    |> Nx.multiply(opts[:alpha])
+    |> Nx.add(opts[:beta])
+    |> Nx.max(0)
+    |> Nx.min(1)
   end
 
   @doc ~S"""
@@ -245,22 +244,22 @@ defmodule Axon.Activations do
       iex> Axon.Activations.hard_silu(Nx.tensor([-3.0, -2.0, -1.0, 0.0, 1.0, 2.0, 3.0], names: [:data]))
       #Nx.Tensor<
         f32[data: 7]
-        [-0.0, -0.3333333432674408, -0.3333333432674408, 0.0, 0.6666666865348816, 1.6666666269302368, 3.0]
+        [-0.0, -0.0, -0.0, 0.0, 0.4000000059604645, 1.2000000476837158, 2.4000000953674316]
       >
 
       iex> Axon.Activations.hard_silu(Nx.tensor([[-1.0, -2.0, -3.0], [1.0, 2.0, 3.0]], type: {:bf, 16}, names: [:batch, :data]))
       #Nx.Tensor<
         bf16[batch: 2][data: 3]
         [
-          [-0.33203125, -0.33203125, -0.0],
-          [0.6640625, 1.6640625, 3.0]
+          [-7.781982421875e-4, -0.0, -0.0],
+          [0.3984375, 1.1953125, 2.390625]
         ]
       >
 
   """
-  defn hard_silu(x) do
+  defn hard_silu(x, opts \\ []) do
     x
-    |> hard_sigmoid()
+    |> hard_sigmoid(opts)
     |> Nx.multiply(x)
   end
 
@@ -353,6 +352,62 @@ defmodule Axon.Activations do
   defn linear(x), do: x
 
   @doc ~S"""
+  Logsumexp activation.
+
+  $$\log(sum e^x_i)$$
+
+  ## Examples
+
+      iex> Axon.Activations.log_sumexp(Nx.tensor([-3.0, -2.0, -1.0, 0.0, 1.0, 2.0, 3.0], names: [:data]))
+      #Nx.Tensor<
+        f32[data: 1]
+        [0.45776283740997314]
+      >
+
+      iex> Axon.Activations.log_sumexp(Nx.tensor([[-1.0, -2.0, -3.0], [1.0, 2.0, 3.0]], type: {:bf, 16}, names: [:batch, :data]))
+      #Nx.Tensor<
+        bf16[batch: 2][data: 1]
+        [
+          [0.404296875],
+          [0.404296875]
+        ]
+      >
+
+  """
+  defn log_sumexp(x, opts \\ []) do
+    opts = keyword!(opts, axis: -1)
+    axes = transform(opts[:axis], &List.wrap/1)
+
+    # This is a scaling term designed to prevent over/under flow when x is very
+    # large. Consider cases where the intermediate value e^x with large positive
+    # x, e^x tends towards infinity or 0. This poisons the rest of the
+    # calculation which would otherwise be normalized with the division by sum(e^x).
+    # Thus we can scale by the max value in the tensor which guarantees all values
+    # are smaller than 0.
+    #
+    # Given the expression is essentially:
+    #
+    # e^(x - C) / sum(e^(x - C))
+    #
+    # We are essentially treating the max value as a constant term, C. Thus there
+    # is no need to differentiate through the max. See also: https://github.com/google/jax/pull/2260
+    # for a note on performance.
+    max_val = stop_grad(Nx.reduce_max(x, axes: axes, keep_axes: true))
+
+    stable_exp =
+      x
+      |> Nx.subtract(max_val)
+      |> Nx.exp()
+
+    res =
+      stable_exp
+      |> Nx.sum(axes: axes, keep_axes: true)
+      |> Nx.log()
+
+    res
+  end
+
+  @doc ~S"""
   Log-sigmoid activation.
 
   $$f(x_i) = \log(\sigmoid(x))$$
@@ -379,9 +434,34 @@ defmodule Axon.Activations do
 
   @doc """
   Log-softmax activation.
+
+  $$f(x_i) = -\log(\sum{e^x_i})$$
+
+  ## Examples
+
+      iex> Axon.Activations.log_softmax(Nx.tensor([-3.0, -2.0, -1.0, 0.0, 1.0, 2.0, 3.0], type: {:f, 32}, names: [:data]))
+      #Nx.Tensor<
+        f32[data: 7]
+        [-6.457762718200684, -5.457762718200684, -4.457762718200684, -3.4577627182006836, -2.4577627182006836, -1.4577628374099731, -0.45776283740997314]
+      >
+
+      iex> Axon.Activations.log_softmax(Nx.tensor([[-1.0, -2.0, -3.0], [1.0, 2.0, 3.0]], type: {:bf, 16}, names: [:batch, :data]))
+      #Nx.Tensor<
+        bf16[batch: 2][data: 3]
+        [
+          [-0.404296875, -1.3984375, -2.390625],
+          [-2.390625, -1.3984375, -0.404296875]
+        ]
+      >
   """
   defn log_softmax(x, opts \\ []) do
-    opts = keyword!(opts, axis: 1)
+    opts = keyword!(opts, axis: -1)
+
+    transform({x, opts}, fn {x, opts} ->
+      if Elixir.Kernel.<=(Nx.rank(x), opts[:axis]) do
+        raise ArgumentError, "log_softmax axis must be within rank of tensor"
+      end
+    end)
 
     shifted = x - stop_grad(Nx.reduce_max(x, axes: [opts[:axis]], keep_axes: true))
 
@@ -487,6 +567,11 @@ defmodule Axon.Activations do
 
   $$f(x_i) = \frac{1}{1 + e^{-x_i}}$$
 
+  **Implementation Note: Sigmoid logits are cached as metadata
+  in the expression and can be used in calculations later on.
+  For example, they are used in cross-entropy calculations for
+  better stability.**
+
   ## Examples
 
       iex> Axon.Activations.sigmoid(Nx.tensor([-3.0, -2.0, -1.0, 0.0, 1.0, 2.0, 3.0], names: [:data]))
@@ -508,7 +593,7 @@ defmodule Axon.Activations do
   defn sigmoid(x) do
     # Cache logits so they are available in certain calculations,
     # e.g. binary_cross_entropy and categorical_cross_entropy
-    transform(Nx.logistic(x), &Nx.Defn.Expr.metadata(&1, %{logits: x}))
+    transform(Nx.sigmoid(x), &Nx.Defn.Expr.metadata(&1, %{logits: x}))
   end
 
   @doc ~S"""
@@ -540,7 +625,7 @@ defmodule Axon.Activations do
   """
   defn silu(x) do
     x
-    |> Nx.logistic()
+    |> Nx.sigmoid()
     |> Nx.multiply(x)
   end
 
@@ -575,16 +660,25 @@ defmodule Axon.Activations do
     * [Self-Normalizing Neural Networks](https://arxiv.org/abs/1706.02515v5)
 
   """
-  defn selu(x) do
-    alpha = 1.6732632423543772848170429916717
-    scale = 1.0507009873554804934193349852946
-    scale * elu(x, alpha: alpha)
+  defn selu(x, opts \\ []) do
+    opts =
+      keyword!(opts,
+        alpha: 1.6732632423543772848170429916717,
+        gamma: 1.0507009873554804934193349852946
+      )
+
+    opts[:gamma] * elu(x, alpha: opts[:alpha])
   end
 
   @doc ~S"""
   Softmax activation along an axis.
 
   $$\frac{e^{x_i}}{\sum_i e^{x_i}}$$
+
+  **Implementation Note: Softmax logits are cached as metadata
+  in the expression and can be used in calculations later on.
+  For example, they are used in cross-entropy calculations for
+  better stability.**
 
   ## Options
 
@@ -612,12 +706,13 @@ defmodule Axon.Activations do
 
   """
   defn softmax(x, opts \\ []) do
-    opts = keyword!(opts, axis: 1)
+    opts = keyword!(opts, axis: -1)
+    axes = transform(opts[:axis], &List.wrap/1)
 
-    transform({x, opts}, fn {x, opts} ->
-      if Elixir.Kernel.<=(Nx.rank(x), opts[:axis]) do
-        raise ArgumentError, "softmax axis must be within rank of tensor"
-      end
+    transform({x, axes}, fn {x, axes} ->
+      Enum.each(axes, fn axis ->
+        Nx.Shape.normalize_axis(Nx.shape(x), axis, Nx.names(x))
+      end)
     end)
 
     # This is a scaling term designed to prevent over/under flow when x is very
@@ -634,7 +729,7 @@ defmodule Axon.Activations do
     # We are essentially treating the max value as a constant term, C. Thus there
     # is no need to differentiate through the max. See also: https://github.com/google/jax/pull/2260
     # for a note on performance.
-    max_val = stop_grad(Nx.reduce_max(x, axes: [opts[:axis]], keep_axes: true))
+    max_val = stop_grad(Nx.reduce_max(x, axes: axes, keep_axes: true))
 
     stable_exp =
       x
@@ -643,7 +738,7 @@ defmodule Axon.Activations do
 
     res =
       stable_exp
-      |> Nx.sum(axes: [opts[:axis]], keep_axes: true)
+      |> Nx.sum(axes: axes, keep_axes: true)
       |> reciprocal()
       |> Nx.multiply(stable_exp)
 

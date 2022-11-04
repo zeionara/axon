@@ -1,19 +1,21 @@
 Mix.install([
-  {:axon, "~> 0.1.0-dev", github: "elixir-nx/axon"},
-  {:exla, "~> 0.1.0-dev", github: "elixir-nx/nx", sparse: "exla"},
-  {:nx, path: "~> 0.1.0-dev", github: "elixir-nx/nx", sparse: "nx", override: true},
-  {:explorer, "~> 0.1.0-dev", github: "elixir-nx/explorer"}
+  {:axon, "~> 0.1.0"},
+  {:exla, "~> 0.2.2"},
+  {:nx, "~> 0.2.1"},
+  {:explorer, "~> 0.2.0"}
 ])
+
+EXLA.set_as_nx_default([:tpu, :cuda, :rocm, :host])
 
 defmodule CreditCardFraud do
   alias Axon.Loop.State
 
   # Download data with a Kaggle account: https://www.kaggle.com/mlg-ulb/creditcardfraud/
-  @fname "examples/structured/creditcard.csv"
+  @file_name "examples/structured/creditcard.csv"
 
   defp data() do
-    IO.puts("Loading #{@fname}")
-    df = Explorer.DataFrame.read_csv!(@fname, dtypes: [{"Time", :float}])
+    IO.puts("Loading #{@file_name}")
+    df = Explorer.DataFrame.from_csv!(@file_name, dtypes: [{"Time", :float}])
 
     {train_df, test_df} = split_train_test(df, 0.8)
 
@@ -51,7 +53,20 @@ defmodule CreditCardFraud do
   end
 
   defp normalize(name),
-    do: fn df -> Explorer.Series.divide(df[name], Explorer.Series.max(df[name])) end
+    do: fn df ->
+      Explorer.Series.divide(
+        df[name],
+        Explorer.Series.max(
+          Explorer.Series.transform(df[name], fn x ->
+            if x >= 0 do
+              x
+            else
+              -x
+            end
+          end)
+        )
+      )
+    end
 
   defp normalize_data(df) do
     df
@@ -63,12 +78,12 @@ defmodule CreditCardFraud do
   defp df_to_tensor(df) do
     df
     |> Explorer.DataFrame.names()
-    |> Enum.map(&Explorer.Series.to_tensor(df[&1]) |> Nx.new_axis(-1))
+    |> Enum.map(&(Explorer.Series.to_tensor(df[&1]) |> Nx.new_axis(-1)))
     |> Nx.concatenate(axis: 1)
   end
 
   defp build_model(num_features) do
-    Axon.input({nil, num_features})
+    Axon.input("input", shape: {nil, num_features})
     |> Axon.dense(256)
     |> Axon.relu()
     |> Axon.dense(256)
@@ -78,50 +93,13 @@ defmodule CreditCardFraud do
     |> Axon.sigmoid()
   end
 
-  defp log_metrics(
-         %State{epoch: epoch, iteration: iter, metrics: metrics, step_state: pstate} = state,
-         mode
-       ) do
-    loss =
-      case mode do
-        :train ->
-          %{loss: loss} = pstate
-          "Loss: #{:io_lib.format('~.8f', [Nx.to_scalar(loss)])}"
-
-        :test ->
-          ""
-      end
-
-    metrics =
-      metrics
-      |> Enum.map(fn {k, v} ->
-        v =
-          case Nx.type(v) do
-            {:f, _} ->
-              :io_lib.format('~.5f', [Nx.to_scalar(v)])
-
-            _ ->
-              :io_lib.format('~7.. B', [Nx.to_scalar(v)])
-          end
-
-        "#{k}: #{v}"
-      end)
-      |> Enum.join(" ")
-
-    epoch = :io_lib.format('~3.. B', [Nx.to_scalar(epoch)])
-    batch = :io_lib.format('~3.. B', [Nx.to_scalar(iter)])
-    IO.write("\rEpoch: #{epoch}, Batch: #{batch}, #{loss} #{metrics}")
-
-    {:continue, state}
-  end
-
   defp summarize(%State{metrics: metrics} = state) do
     IO.write("\n\n")
 
-    legit_transactions_declined = Nx.to_scalar(metrics["fp"])
-    legit_transactions_accepted = Nx.to_scalar(metrics["tn"])
-    fraud_transactions_accepted = Nx.to_scalar(metrics["fn"])
-    fraud_transactions_declined = Nx.to_scalar(metrics["tp"])
+    legit_transactions_declined = Nx.to_number(metrics["fp"])
+    legit_transactions_accepted = Nx.to_number(metrics["tn"])
+    fraud_transactions_accepted = Nx.to_number(metrics["fn"])
+    fraud_transactions_declined = Nx.to_number(metrics["tp"])
     total_fraud = fraud_transactions_declined + fraud_transactions_accepted
     total_legit = legit_transactions_declined + legit_transactions_accepted
 
@@ -138,7 +116,7 @@ defmodule CreditCardFraud do
   end
 
   defp metrics(loop) do
-  	loop
+    loop
     |> Axon.Loop.metric(:true_positives, "tp", :running_sum)
     |> Axon.Loop.metric(:true_negatives, "tn", :running_sum)
     |> Axon.Loop.metric(:false_positives, "fp", :running_sum)
@@ -147,18 +125,16 @@ defmodule CreditCardFraud do
 
   defp test_model(model, model_state, test_data) do
     model
-    |> Axon.Loop.evaluator(model_state)
+    |> Axon.Loop.evaluator()
     |> metrics()
     |> Axon.Loop.handle(:epoch_completed, &summarize/1)
-    |> Axon.Loop.run(test_data, compiler: EXLA)
+    |> Axon.Loop.run(test_data, model_state, compiler: EXLA)
   end
 
   defp train_model(model, loss, optimizer, train_data) do
     model
     |> Axon.Loop.trainer(loss, optimizer)
-    |> metrics()
-    |> Axon.Loop.handle(:iteration_completed, &log_metrics(&1, :train), every: 10)
-    |> Axon.Loop.run(train_data, epochs: 30, compiler: EXLA)
+    |> Axon.Loop.run(train_data, %{}, epochs: 30, compiler: EXLA)
   end
 
   def run() do
@@ -166,7 +142,7 @@ defmodule CreditCardFraud do
     {train_inputs, train_targets} = train
     {test_inputs, test_targets} = test
 
-    fraud = Nx.sum(train_targets) |> Nx.to_scalar()
+    fraud = Nx.sum(train_targets) |> Nx.to_number()
     legit = Nx.size(train_targets) - fraud
 
     batched_train_inputs = Nx.to_batched_list(train_inputs, 2048)
@@ -182,14 +158,16 @@ defmodule CreditCardFraud do
     IO.puts("% fraudlent transactions (train): #{100 * (fraud / (legit + fraud))}%")
     IO.write("\n\n")
 
-    model = build_model(30)
-    loss = &Axon.Losses.binary_cross_entropy(
-      &1,
-      &2,
-      negative_weight: 1 / legit,
-      positive_weight: 1 / fraud,
-      reduction: :mean
-    )
+    model = build_model(elem(train_inputs.shape, 1))
+
+    loss =
+      &Axon.Losses.binary_cross_entropy(
+        &1,
+        &2,
+        negative_weight: 1 / legit,
+        positive_weight: 1 / fraud,
+        reduction: :mean
+      )
 
     optimizer = Axon.Optimizers.adam(1.0e-2)
 

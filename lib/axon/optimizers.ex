@@ -23,7 +23,8 @@ defmodule Axon.Optimizers do
   defined elsewhere):
 
       defmodule Learning do
-        @default_defn_compiler EXLA
+
+        import Nx.Defn
 
         defn init(params, init_fn) do
           init_fn.(params)
@@ -31,7 +32,7 @@ defmodule Axon.Optimizers do
 
         defn update(params, optimizer_state, inputs, targets, update_fn) do
           {loss, gradient} = value_and_grad(params, &objective(&1, inputs, targets))
-          {new_optimizer_state, scaled_updates} = update_fn.(gradient, optimizer_state, params)
+          {scaled_updates, new_optimizer_state} = update_fn.(gradient, optimizer_state, params)
           {Axon.Updates.apply_updates(params, scaled_updates), new_optimizer_state, loss}
         end
       end
@@ -68,7 +69,7 @@ defmodule Axon.Optimizers do
 
     * [AdaBelief Optimizer: Adapting Stepsizes by the Belief in Observed Gradients](https://arxiv.org/abs/2010.07468)
   """
-  def adabelief(learning_rate, opts \\ []) do
+  def adabelief(learning_rate \\ 1.0e-3, opts \\ []) do
     Updates.scale_by_belief(opts)
     |> scale_by_learning_rate(learning_rate)
   end
@@ -84,7 +85,7 @@ defmodule Axon.Optimizers do
 
     * [Adaptive Subgradient Methods for Online Learning and Stochastic Optimization](https://www.jmlr.org/papers/volume12/duchi11a/duchi11a.pdf)
   """
-  def adagrad(learning_rate, opts \\ []) do
+  def adagrad(learning_rate \\ 1.0e-3, opts \\ []) do
     Updates.scale_by_rss(opts)
     |> scale_by_learning_rate(learning_rate)
   end
@@ -97,13 +98,13 @@ defmodule Axon.Optimizers do
     * `:b1` - first moment decay. Defaults to `0.9`
     * `:b2` - second moment decay. Defaults to `0.999`
     * `:eps` - numerical stability term. Defaults to `1.0e-8`
-    * `:eps_root` - numerical stability term. Defaults to `1.0e-9`
+    * `:eps_root` - numerical stability term. Defaults to `1.0e-15`
 
   ## References
 
     * [Adam: A Method for Stochastic Optimization](https://arxiv.org/abs/1412.6980)
   """
-  def adam(learning_rate, opts \\ []) do
+  def adam(learning_rate \\ 1.0e-3, opts \\ []) do
     Updates.scale_by_adam(opts)
     |> scale_by_learning_rate(learning_rate)
   end
@@ -119,37 +120,12 @@ defmodule Axon.Optimizers do
     * `:eps_root` - numerical stability term. Defaults to `0.0`
     * `:decay` - weight decay. Defaults to `0.0`
   """
-  def adamw(learning_rate, opts \\ []) do
+  def adamw(learning_rate \\ 1.0e-3, opts \\ []) do
     {decay, opts} = Keyword.pop(opts, :decay, 0.0)
 
     Updates.scale_by_adam(opts)
     |> Updates.add_decayed_weights(decay: decay)
     |> scale_by_learning_rate(learning_rate)
-  end
-
-  @doc """
-  Fromage optimizer.
-
-  ## Options
-
-    * `:min_norm` - minimum norm value. Defaults to `0.0`.
-
-  ## References
-
-    * [On the distance between two neural networks and the stability of learning](https://proceedings.neurips.cc/paper/2020/file/f4b31bee138ff5f7b84ce1575a738f95-Paper.pdf)
-  """
-  def fromage(learning_rate, opts \\ []) do
-    if is_function(learning_rate) do
-      raise ArgumentError,
-            "fromage optimizer does not support learning rate schedule," <>
-              " please provide a scalar learning rate"
-    end
-
-    mult = Nx.divide(1, Nx.sqrt(Nx.add(1, Nx.power(learning_rate, 2))))
-
-    Updates.scale_by_trust_ratio(opts)
-    |> Updates.scale(Nx.multiply(-learning_rate, mult))
-    |> Updates.add_decayed_weights(decay: Nx.subtract(mult, 1))
   end
 
   @doc """
@@ -168,7 +144,7 @@ defmodule Axon.Optimizers do
 
     * [Large Batch Optimization for Deep Learning: Training BERT in 76 minutes](https://arxiv.org/abs/1904.00962)
   """
-  def lamb(learning_rate, opts \\ []) do
+  def lamb(learning_rate \\ 1.0e-2, opts \\ []) do
     {decay, opts} = Keyword.pop(opts, :decay, 0.0)
     {min_norm, opts} = Keyword.pop(opts, :min_norm, 0.0)
 
@@ -186,7 +162,7 @@ defmodule Axon.Optimizers do
     * `:eta` - used to compute variance of noise distribution. Defaults to `0.1`
     * `:gamma` - used to compute variance of noise distribution. Defaults to `0.55`
   """
-  def noisy_sgd(learning_rate, opts \\ []) do
+  def noisy_sgd(learning_rate \\ 1.0e-2, opts \\ []) do
     scale_by_learning_rate(learning_rate)
     |> Updates.add_noise(opts)
   end
@@ -206,7 +182,7 @@ defmodule Axon.Optimizers do
 
     * [On the Variance of Adaptive Learning Rate and Beyond](https://arxiv.org/pdf/1908.03265.pdf)
   """
-  def radam(learning_rate, opts \\ []) do
+  def radam(learning_rate \\ 1.0e-3, opts \\ []) do
     Updates.scale_by_radam(opts)
     |> scale_by_learning_rate(learning_rate)
   end
@@ -224,7 +200,7 @@ defmodule Axon.Optimizers do
     * `:decay` - EMA decay rate. Defaults to `0.9`
     * `:eps` - numerical stability term. Defaults to `1.0e-8`
   """
-  def rmsprop(learning_rate, opts \\ []) do
+  def rmsprop(learning_rate \\ 1.0e-2, opts \\ []) do
     {centered, opts} = Keyword.pop(opts, :centered, false)
     {nesterov?, opts} = Keyword.pop(opts, :nesterov, false)
     {momentum, opts} = Keyword.pop(opts, :momentum, nil)
@@ -251,7 +227,7 @@ defmodule Axon.Optimizers do
       to value of this term.
     * `:nesterov` - whether or not to use nesterov momentum. Defaults to `false`
   """
-  def sgd(learning_rate, opts \\ []) do
+  def sgd(learning_rate \\ 1.0e-2, opts \\ []) do
     momentum = opts[:momentum]
     nesterov? = opts[:nesterov] || false
 
@@ -278,7 +254,7 @@ defmodule Axon.Optimizers do
 
     * [Adaptive Methods for Nonconvex Optimization](https://papers.nips.cc/paper/2018/file/90365351ccc7437a1309dc64e4db32a3-Paper.pdf)
   """
-  def yogi(learning_rate, opts \\ []) do
+  def yogi(learning_rate \\ 1.0e-2, opts \\ []) do
     Updates.scale_by_yogi(opts)
     |> scale_by_learning_rate(learning_rate)
   end
@@ -292,6 +268,6 @@ defmodule Axon.Optimizers do
   end
 
   defp scale_by_learning_rate(combinator, lr) do
-    Updates.scale(combinator, -lr)
+    Updates.scale_by_state(combinator, -lr)
   end
 end
