@@ -2813,6 +2813,30 @@ defmodule Axon do
   end
 
   @doc """
+  Adds a stack columns layer to the network.
+
+  A stack columns layer is designed to be used with `Nx.LazyContainer`
+  data structures like Explorer DataFrames. Given an input which is a
+  DataFrame, `Axon.stack_container/2` will stack the columns in each
+  row to create a single vector.
+
+  You may optionally specify `:ignore` to ignore certain columns in
+  the container.
+
+  ## Options
+
+    * `:name` - layer name.
+
+    * `:ignore` - keys to ignore when stacking.
+  """
+  @doc type: :special
+  def stack_columns(%Axon{} = x, opts \\ []) do
+    opts = Keyword.validate!(opts, [:name, ignore: []])
+
+    layer(:stack_columns, [x], name: opts[:name], ignore: opts[:ignore], op_name: :stack_columns)
+  end
+
+  @doc """
   Freezes parameters returned from `fun` in the given model.
 
   `fun` takes the model's parameter list and returns the list of
@@ -3231,12 +3255,9 @@ defmodule Axon do
   @doc type: :model
   def compile(model, template, init_params \\ %{}, opts \\ []) when is_list(opts) do
     {init_fn, predict_fn} = build(model, opts)
-    init_compiled_fn = Nx.Defn.compile(init_fn, [template, init_params], opts)
-
-    predict_compiled_fn =
-      Nx.Defn.compile(predict_fn, [init_compiled_fn.(template, init_params), template], opts)
-
-    {init_compiled_fn, predict_compiled_fn}
+    init_params = Nx.Defn.jit_apply(init_fn, [template, init_params], opts)
+    predict_compiled_fn = Nx.Defn.compile(predict_fn, [init_params, template], opts)
+    {init_params, predict_compiled_fn}
   end
 
   @doc """

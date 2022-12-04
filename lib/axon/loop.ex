@@ -209,6 +209,8 @@ defmodule Axon.Loop do
   alias __MODULE__, as: Loop
   alias Axon.Loop.State
 
+  import Axon.Shared
+
   @file_version 1
 
   @default_events [
@@ -305,83 +307,126 @@ defmodule Axon.Loop do
   optimizer state, and gradients. See `Axon.Updates` for more information on building
   optimizers.
   """
-  def train_step(model, loss, optimizer, loss_scale \\ :identity) do
+  def train_step(model, loss, optimizer, loss_scale \\ :identity, steps \\ 1) do
     {init_model_fn, forward_model_fn} = build_model_fns(model, :train)
     loss_fn = build_loss_fn(loss)
     {init_optimizer_fn, update_optimizer_fn} = build_optimizer_fns(optimizer)
     {init_loss_scale, scale_loss, unscale_grads} = build_loss_scale_fns(loss_scale)
 
-    init_fn = fn {inp, _}, init_model_state ->
-      model_state = init_model_fn.(inp, init_model_state)
-      optimizer_state = init_optimizer_fn.(model_state)
-      loss_scale_state = init_loss_scale.()
+    init_fn = fn
+      {inp, _}, %{} = init_model_state ->
+        model_state = init_model_fn.(inp, init_model_state)
+        optimizer_state = init_optimizer_fn.(model_state)
+        loss_scale_state = init_loss_scale.()
 
-      %{
-        i: Nx.tensor(0),
-        y_true: Nx.tensor(0.0),
-        y_pred: Nx.tensor(0.0),
-        loss: Nx.tensor(0.0),
-        model_state: model_state,
-        optimizer_state: optimizer_state,
-        loss_scale_state: loss_scale_state
-      }
+        %{
+          i: Nx.tensor(0),
+          y_true: Nx.tensor(0.0),
+          y_pred: Nx.tensor(0.0),
+          loss: Nx.tensor(0.0),
+          gradient_step: Nx.tensor(0),
+          model_state: model_state,
+          gradient_state: zeros_like(model_state),
+          optimizer_state: optimizer_state,
+          loss_scale_state: loss_scale_state
+        }
+
+      data, state ->
+        raise_bad_training_inputs!(data, state)
     end
 
     # TODO: We should probably compute in same compute policy as MP
     # here
     objective_fn = fn model_state, loss_scale_state, inp, tar ->
       model_out = forward_model_fn.(model_state, inp)
-      {model_out, scale_loss.(loss_fn.(tar, model_out.prediction), loss_scale_state)}
+
+      loss =
+        tar
+        |> loss_fn.(model_out.prediction)
+        |> scale_loss.(loss_scale_state)
+        |> Nx.divide(steps)
+
+      {model_out, loss}
     end
 
-    step_fn = fn {inp, tar}, state ->
-      %{
-        i: i,
-        loss_scale_state: loss_scale_state,
-        model_state: model_state,
-        optimizer_state: optimizer_state,
-        loss: loss
-      } = state
+    step_fn = fn
+      {inp, tar}, %{} = state ->
+        %{
+          i: i,
+          gradient_step: gradient_step,
+          loss_scale_state: loss_scale_state,
+          gradient_state: gradient_state,
+          model_state: model_state,
+          optimizer_state: optimizer_state,
+          loss: loss
+        } = state
 
-      {{model_out, batch_loss}, gradients} =
-        Nx.Defn.value_and_grad(
-          model_state,
-          &objective_fn.(&1, loss_scale_state, inp, tar),
-          fn x -> elem(x, 1) end
-        )
+        {{model_out, batch_loss}, gradients} =
+          Nx.Defn.value_and_grad(
+            model_state,
+            &objective_fn.(&1, loss_scale_state, inp, tar),
+            fn x -> elem(x, 1) end
+          )
 
-      {gradients, new_loss_scale_state} = unscale_grads.(gradients, loss_scale_state)
+        {gradients, new_loss_scale_state} = unscale_grads.(gradients, loss_scale_state)
 
-      preds = model_out.prediction
-      new_state = model_out.state
+        preds = model_out.prediction
+        new_state = model_out.state
 
-      new_loss =
-        loss
-        |> Nx.multiply(i)
-        |> Nx.add(batch_loss)
-        |> Nx.divide(Nx.add(i, 1))
+        new_loss =
+          loss
+          |> Nx.multiply(i)
+          |> Nx.add(Nx.multiply(batch_loss, steps))
+          |> Nx.divide(Nx.add(i, 1))
 
-      {updates, new_optimizer_state} =
-        update_optimizer_fn.(gradients, optimizer_state, model_state)
+        {new_model_state, new_optimizer_state, new_gradient_state, new_gradient_step} =
+          if Nx.greater_equal(gradient_step, steps - 1) do
+            {updates, new_optimizer_state} =
+              update_optimizer_fn.(gradients, optimizer_state, model_state)
 
-      new_model_state = Axon.Updates.apply_updates(model_state, updates, new_state)
+            new_gradient_state = zeros_like(model_state)
+            new_model_state = Axon.Updates.apply_updates(model_state, updates, new_state)
+            {new_model_state, new_optimizer_state, new_gradient_state, 0}
+          else
+            {model_state, optimizer_state, gradient_state + gradients, gradient_step + 1}
+          end
 
-      %{
-        state
-        | i: Nx.add(i, 1),
-          y_true: tar,
-          y_pred: preds,
-          loss: new_loss,
-          model_state: Axon.Updates.apply_updates(model_state, updates),
-          optimizer_state: new_optimizer_state
-          loss_scale_state: new_loss_scale_state
-      }
+        %{
+          state
+          | i: Nx.add(i, 1),
+            gradient_step: new_gradient_step,
+            y_true: tar,
+            y_pred: preds,
+            loss: new_loss,
+            model_state: Axon.Updates.apply_updates(new_model_state, updates),
+            gradient_state: new_gradient_state,
+            optimizer_state: new_optimizer_state,
+            loss_scale_state: new_loss_scale_state
+        }
+
+      data, state ->
+        raise_bad_training_inputs!(data, state)
     end
 
     {
       Nx.Defn.jit(init_fn, on_conflict: :reuse),
       Nx.Defn.jit(step_fn, on_conflict: :reuse)
     }
+  end
+
+  defp raise_bad_training_inputs!(data, state) do
+    raise ArgumentError,
+          "invalid arguments given to train-step initialization," <>
+            " this usually happens when you pass a invalid parameters" <>
+            " to Axon.Loop.run with a loop constructed using Axon.Loop.trainer" <>
+            " or Axon.Loop.evaluator, supervised training and evaluation loops"
+
+    " expect a stream or enumerable of inputs" <>
+      " of the form {x_train, y_train} where x_train and y_train" <>
+      " are batches of tensors, you must also provide an initial model" <>
+      " state such as an empty map: Axon.Loop.run(loop, data, %{}), got" <>
+      " input data: #{inspect(data)} and initial model state: " <>
+      " #{inspect(state)}"
   end
 
   @doc """
@@ -403,12 +448,16 @@ defmodule Axon.Loop do
       }
     end
 
-    step_fn = fn {inp, tar}, %{model_state: model_state} ->
-      %{
-        model_state: model_state,
-        y_true: tar,
-        y_pred: forward_model_fn.(model_state, inp)
-      }
+    step_fn = fn
+      {inp, tar}, %{model_state: model_state} ->
+        %{
+          model_state: model_state,
+          y_true: tar,
+          y_pred: forward_model_fn.(model_state, inp)
+        }
+
+      data, state ->
+        raise_bad_training_inputs!(data, state)
     end
 
     {
@@ -549,9 +598,13 @@ defmodule Axon.Loop do
   """
   def trainer(model, loss, optimizer, loss_scale \\ :identity, opts \\ []) do
     log_interval = opts[:log] || 50
+    gradient_accumulation_steps = opts[:gradient_accumulation_steps] || 1
     # Build loss now so we can use it as a metric
     loss_fn = build_loss_fn(loss)
-    {init_fn, step_fn} = train_step(model, loss_fn, optimizer, loss_scale)
+
+    {init_fn, step_fn} =
+      train_step(model, loss_fn, optimizer, loss_scale, gradient_accumulation_steps)
+
     output_transform = fn state -> state.step_state[:model_state] end
 
     loop =
@@ -561,8 +614,11 @@ defmodule Axon.Loop do
 
     if log_interval > 0 do
       loop
-      |> log(:iteration_completed, &supervised_log_message_fn/1, :stdio, every: log_interval)
-      |> log(:epoch_completed, fn _ -> "\n" end, :stdio)
+      |> log(&supervised_log_message_fn/1,
+        event: :iteration_completed,
+        filter: [every: log_interval]
+      )
+      |> log(fn _ -> "\n" end, event: :epoch_completed)
     else
       loop
     end
@@ -629,7 +685,7 @@ defmodule Axon.Loop do
     output_transform = fn state -> state.metrics end
 
     loop(step_fn, init_fn, output_transform)
-    |> log(:iteration_completed, &supervised_log_message_fn(&1, false), :stdio)
+    |> log(&supervised_log_message_fn(&1, false), event: :iteration_completed)
   end
 
   @doc """
@@ -803,8 +859,12 @@ defmodule Axon.Loop do
   `message_fn` should take the loop state and return a binary
   representing the message to be written to the IO device.
   """
-  def log(%Loop{} = loop, event, message_fn, device \\ :stdio, filter \\ :always)
-      when is_function(message_fn, 1) do
+  def log(%Loop{} = loop, message_fn, opts \\ []) when is_function(message_fn, 1) do
+    opts = Keyword.validate!(opts, event: :iteration_completed, filter: :always, device: :stdio)
+    event = opts[:event] || :iteration_completed
+    filter = opts[:filter] || :always
+    device = opts[:device] || :stdio
+
     log_fn = fn %State{} = state ->
       try do
         msg = message_fn.(state)
@@ -862,16 +922,19 @@ defmodule Axon.Loop do
       model
       |> Axon.Loop.trainer(:mean_squared_error, :sgd)
       |> Axon.Loop.metric(:mean_absolute_error)
-      |> Axon.Loop.validate(model, validation_data, :iteration_completed, every: 10_000)
+      |> Axon.Loop.validate(model, validation_data, event: :iteration_completed, filter: [every: 10_000])
       |> Axon.Loop.metric(:binary_cross_entropy)
   """
   def validate(
         %Loop{metrics: metric_fns} = loop,
         model,
         validation_data,
-        event \\ :epoch_completed,
-        filter \\ :always
+        opts \\ []
       ) do
+    opts = Keyword.validate!(opts, event: :epoch_completed, filter: :always)
+    event = opts[:event] || :epoch_completed
+    filter = opts[:filter] || :always
+
     validation_loop = fn %State{metrics: metrics, step_state: step_state} = state ->
       %{model_state: model_state} = step_state
 
@@ -883,7 +946,7 @@ defmodule Axon.Loop do
             metric(loop, v, k)
           end)
         )
-        |> log(:completed, fn _ -> "\n" end)
+        |> log(fn _ -> "\n" end, event: :completed)
         |> run(validation_data, model_state)
         |> Access.get(0)
         |> Map.new(fn {k, v} ->
@@ -1775,7 +1838,7 @@ defmodule Axon.Loop do
   defp build_loss_scale_fns(invalid) do
     raise ArgumentError,
           "Invalid loss scale #{inspect(invalid)}, a valid" <>
-            " loss scale is an atom amtching the name of a loss" <>
+            " loss scale is an atom matching the name of a loss" <>
             " scale implementation in Axon.LossScale or a 3-tuple" <>
             " of {init_scale, scale_fn, unscale_fn}. See Axon.LossScale" <>
             " for more information"
